@@ -1,22 +1,20 @@
 import os
 import io
-import json
-import numpy as np
-from typing import Optional
 from dotenv import load_dotenv
-from pydub import AudioSegment
-from scipy.signal import butter, lfilter
 from openai import OpenAI
 from elevenlabs.client import ElevenLabs
+from pydub import AudioSegment
+import numpy as np
+from scipy.signal import butter, lfilter
 
 # Load environment variables
 load_dotenv()
 
-class AudioAssistant:
+class AudioSummarizer:
     def __init__(self):
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.elevenlabs_client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
-        self.voice_id = os.getenv("ELEVENLABS_VOICE_ID")  # Default voice ID
+        self.voice_id = os.getenv("ELEVENLABS_VOICE_ID", "Rachel")  # Default voice if not set
 
     @staticmethod
     def high_pass_filter(audio_data: np.ndarray, sample_rate: int, cutoff=80):
@@ -28,12 +26,12 @@ class AudioAssistant:
 
     @staticmethod
     def apply_filter_and_save_audio(mp3_bytes: bytes, output_file: str):
-        """Convert MP3 bytes to waveform, apply filter, and save back as MP3."""
+        """Apply noise filter and save the MP3 file."""
         audio_segment = AudioSegment.from_file(io.BytesIO(mp3_bytes), format="mp3")
         samples = np.array(audio_segment.get_array_of_samples()).astype(np.float32)
         if audio_segment.channels == 2:
             samples = samples.reshape((-1, 2)).mean(axis=1)
-        filtered_samples = AudioAssistant.high_pass_filter(samples, audio_segment.frame_rate)
+        filtered_samples = AudioSummarizer.high_pass_filter(samples, audio_segment.frame_rate)
         filtered_audio = AudioSegment(
             filtered_samples.astype(np.int16).tobytes(),
             frame_rate=audio_segment.frame_rate,
@@ -44,30 +42,21 @@ class AudioAssistant:
         filtered_audio.export(output_file, format="mp3")
         print(f"✅ Filtered audio saved as {output_file}")
 
-    def transcribe_audio(self, audio_file: str) -> str:
-        """Transcribe audio file using ElevenLabs."""
-        with open(audio_file, "rb") as f:
-            audio_bytes = f.read()
-        transcription = self.elevenlabs_client.audio.transcribe(audio_bytes)
-        return transcription["text"]
-
     def summarize_text(self, text: str) -> str:
-        """Summarize text using OpenAI GPT."""
-        prompt = f"Please summarize the following text in concise, clear sentences:\n\n{text}"
+        """Summarize input text using GPT."""
+        prompt = f"Summarize the following text in concise and clear sentences:\n\n{text}"
         response = self.openai_client.chat.completions.create(
-            model="gpt-4-turbo",
+            model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=500,
             temperature=0.5
         )
-        summary = response.choices[0].message.content
-        return summary
+        return response.choices[0].message.content.strip()
 
     def generate_audio_from_text(self, text: str, output_file: str):
-        """Convert text to speech using ElevenLabs and save filtered audio."""
+        """Convert summarized text to speech using ElevenLabs."""
         audio_data = self.elevenlabs_client.text_to_speech.convert(
-            #voice_id=self.voice_id,
-            voice_id="Rachel",
+            voice_id=self.voice_id,
             text=text,
             model_id="eleven_multilingual_v2",
             output_format="mp3_44100_128",
@@ -82,23 +71,23 @@ class AudioAssistant:
         audio_bytes = b''.join(chunk for chunk in audio_data if chunk)
         self.apply_filter_and_save_audio(audio_bytes, output_file)
 
-    def process_audio_file(self, input_audio: str, output_audio: str):
-        """Full workflow: transcribe -> summarize -> TTS -> filter."""
-        print(f"📄 Transcribing {input_audio}...")
-        transcription = self.transcribe_audio(input_audio)
-        print(f"📝 Transcription:\n{transcription}\n")
+    def summarize_and_generate_audio(self, input_text: str, output_audio: str):
+        """Full workflow: summarize text -> TTS -> filter."""
+        print("📝 Summarizing input text...")
+        summary = self.summarize_text(input_text)
+        print(f"\n📄 Summary:\n{summary}\n")
         
-        print("🔹 Summarizing text...")
-        summary = self.summarize_text(transcription)
-        print(f"📝 Summary:\n{summary}\n")
-        
-        print("🔊 Generating audio from summary...")
+        print("🔊 Generating audio summary...")
         self.generate_audio_from_text(summary, output_audio)
-        print("✅ Done!")
+        print("✅ Audio summary saved successfully!")
 
 # Example usage
 if __name__ == "__main__":
-    assistant = AudioAssistant()
-    input_file = "input/audio_input.mp3"
-    output_file = "output/audio_summary.mp3"
-    assistant.process_audio_file(input_file, output_file)
+    summarizer = AudioSummarizer()
+    input_text = """
+    In today’s meeting, the team discussed project progress and upcoming deadlines. 
+    Key action items include finalizing the UI design, testing backend APIs, 
+    and preparing the product demo for next week’s client review.
+    """
+    output_file = "output/meeting_summary.mp3"
+    summarizer.summarize_and_generate_audio(input_text, output_file)
