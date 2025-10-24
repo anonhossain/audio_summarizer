@@ -66,7 +66,8 @@ class AudioAssistant:
     def generate_audio_from_text(self, text: str, output_file: str):
         """Convert text to speech using ElevenLabs and save filtered audio."""
         audio_data = self.elevenlabs_client.text_to_speech.convert(
-            voice_id=self.voice_id,
+            #voice_id=self.voice_id,
+            voice_id="Rachel",
             text=text,
             model_id="eleven_multilingual_v2",
             output_format="mp3_44100_128",
